@@ -75,8 +75,10 @@ func (r *Renderer) blocks(id string, depth int) ([]string, error) {
 			line = "> " + icon + text
 		case "code":
 			lines = append(lines, ind+"```"+notion.Str(v, "language"))
-			for _, l := range strings.Split(text, "\n") {
-				lines = append(lines, ind+l)
+			if code := strings.TrimSuffix(text, "\n"); code != "" {
+				for _, l := range strings.Split(code, "\n") {
+					lines = append(lines, ind+l)
+				}
 			}
 			lines = append(lines, ind+"```")
 			continue

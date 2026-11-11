@@ -165,7 +165,16 @@ func (a *app) ensureIndex() (*index.Index, error) {
 		progress = a.errOut
 	}
 	if _, err := ix.Sync(a.api(), false, a.aliasIDs(), progress); err != nil {
-		return nil, err
+		if !ok {
+			return nil, err
+		}
+		// Searching a slightly stale index beats failing (offline, expired key, outage).
+		stale, lerr := index.Load(indexPath())
+		if lerr != nil {
+			return nil, err
+		}
+		fmt.Fprintf(a.errOut, "注意: 索引を更新できなかったので、%s時点の索引を使います（%v）\n", notion.JST(stale.SyncedAt), err)
+		return stale, nil
 	}
 	return ix, nil
 }

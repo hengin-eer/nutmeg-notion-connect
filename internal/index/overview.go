@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hengin-eer/nutmeg-notion-connect/internal/notion"
 )
 
 // OverviewOptions scopes and sizes the overview.
@@ -94,7 +96,7 @@ func (ix *Index) Overview(o OverviewOptions) string {
 	}
 	synced := "未同期"
 	if t, err := time.Parse(time.RFC3339, ix.SyncedAt); err == nil {
-		synced = t.In(time.FixedZone("JST", 9*3600)).Format("2006-01-02 15:04")
+		synced = notion.JST(t.Format(time.RFC3339))
 	}
 	fmt.Fprintf(&sb, "%s：ページ %d / DB %d（索引の同期 %s）\n", scope, pages, dbs, synced)
 
@@ -114,7 +116,8 @@ func (ix *Index) Overview(o OverviewOptions) string {
 		}
 		sb.WriteString("\n## 中身の多いDB（件数 / 最終更新 / ID）\n")
 		for _, c := range topCounts(dbCounts, o.Top) {
-			fmt.Fprintf(&sb, "%5d  %s  %s  %s\n", c.n, ix.Items[c.key].Edited[:min(10, len(ix.Items[c.key].Edited))], label(c.key), c.key)
+			edited := notion.JST(ix.Items[c.key].Edited)
+			fmt.Fprintf(&sb, "%5d  %s  %s  %s\n", c.n, edited[:min(10, len(edited))], label(c.key), c.key)
 		}
 		sb.WriteString("\n## 子ページの多いページ（件数 / ID）\n")
 		for _, c := range topCounts(pageCounts, o.Top) {

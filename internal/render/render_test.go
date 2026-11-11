@@ -20,7 +20,9 @@ const fixture = `{
   {"id":"tb","type":"table","has_children":true,"table":{}},
   {"id":"cp","type":"child_page","has_children":false,"child_page":{"title":"子"}},
   {"id":"h2","type":"heading_2","has_children":false,"heading_2":{"rich_text":[{"plain_text":"当日"}]}},
-  {"id":"td","type":"to_do","has_children":false,"to_do":{"checked":true,"rich_text":[{"plain_text":"済"}]}}
+  {"id":"td","type":"to_do","has_children":false,"to_do":{"checked":true,"rich_text":[{"plain_text":"済"}]}},
+  {"id":"cd","type":"code","has_children":false,"code":{"language":"go","rich_text":[{"plain_text":"x := 1\n"}]}},
+  {"id":"ce","type":"code","has_children":false,"code":{"language":"sh","rich_text":[]}}
  ],
  "n2": [
   {"id":"b1","type":"bulleted_list_item","has_children":false,"bulleted_list_item":{"rich_text":[{"plain_text":"下"}]}}
@@ -62,7 +64,7 @@ func TestPage(t *testing.T) {
 📄 子 (cp)
 ## 当日
 - [x] 済
-`
+` + "```go\nx := 1\n```\n```sh\n```\n"
 	if got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -80,7 +82,7 @@ func TestSection(t *testing.T) {
 	r := &Renderer{Fetch: fetcher(t)}
 	body, _ := r.Page("page")
 	got, ok := Section(body, "当日")
-	if !ok || got != "## 当日\n- [x] 済\n" {
+	if !ok || !strings.HasPrefix(got, "## 当日\n- [x] 済\n") {
 		t.Errorf("section: %q", got)
 	}
 	hs := Headings(body)

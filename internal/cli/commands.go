@@ -482,6 +482,9 @@ func (a *app) cmdAlias(args []string) error {
 			fmt.Fprintln(a.out, "別名なし。`nn alias 名前 <IDかURL>` で登録できます")
 		}
 	case 1:
+		if _, ok := a.aliases[pos[0]]; !ok {
+			return fail("別名「%s」はありません。`nn alias` で一覧を見てください", pos[0])
+		}
 		delete(a.aliases, pos[0])
 		if _, err := a.aliases.Save(); err != nil {
 			return err
