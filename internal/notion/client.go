@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -91,6 +92,21 @@ func (c *Client) do(method, path string, body any) (Obj, error) {
 		req.Header.Set("Authorization", "Bearer "+c.key)
 		req.Header.Set("Notion-Version", Version)
 		req.Header.Set("Content-Type", "application/json")
+		// Only a constant marker is stored: never URLs, headers, or credentials.
+		if path := os.Getenv("NN_STATS_FILE"); path != "" {
+			f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+			if err != nil {
+				return nil, fmt.Errorf("open request stats: %w", err)
+			}
+			_, writeErr := f.WriteString("request\n")
+			closeErr := f.Close()
+			if writeErr != nil {
+				return nil, writeErr
+			}
+			if closeErr != nil {
+				return nil, closeErr
+			}
+		}
 		res, err := c.http.Do(req)
 		if err != nil {
 			if netFails++; netFails <= maxNetRetries {
