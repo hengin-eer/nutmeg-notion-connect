@@ -77,3 +77,7 @@ go build -o bin/nn ./cmd/nn
 | `internal/config` | キー・別名・保存場所 |
 
 リリースは `v*` のタグを push すると、GitHub Actions と GoReleaser が OS 別のファイルを Releases に置く。
+
+## ライセンス
+
+MIT
