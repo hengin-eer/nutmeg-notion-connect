@@ -1,0 +1,9 @@
+{
+  "name": "nutmeg-notion-connect",
+  "version": "0.1.0",
+  "description": "NUTMEG の Notion を読み取り専用で読むスキル（CLI nn を使う）",
+  "author": {
+    "name": "hengin-eer"
+  },
+  "repository": "https://github.com/hengin-eer/nutmeg-notion-connect"
+}
