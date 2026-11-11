@@ -17,5 +17,10 @@ NUTMEG の Notion を読み取り専用で読むCLI `nn` と、Claude Code 用�
    ln -s "$PWD" ~/.claude/skills/nutmeg-notion-connect
    ```
 4. `nn sync --full` で索引を作る（1分ちょっと）
+5. よく使うDBに別名をつける（任意）
+   ```sh
+   nn dbs Articles            # IDを確かめる
+   nn alias articles <ID>     # ~/.config/nutmeg-notion/aliases.json に保存される
+   ```
 
 Python 3.9 以上、標準ライブラリだけで動く。使い方は `nn -h` と `SKILL.md`。

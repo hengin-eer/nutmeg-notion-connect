@@ -17,6 +17,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "nutmeg-notion" / "env"
+ALIASES = CONFIG.parent / "aliases.json"  # 別名は各自の環境に置く（リポジトリにIDを入れない）
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "nutmeg-notion"
 PAGES = CACHE / "pages"
 INDEX = CACHE / "index.json"
@@ -113,8 +114,7 @@ def paginate(path, body=None):
 # ---------- ID・別名 ----------
 
 def aliases():
-    p = HERE / "aliases.json"
-    return json.loads(p.read_text()) if p.exists() else {}
+    return json.loads(ALIASES.read_text()) if ALIASES.exists() else {}
 
 
 def norm_id(s):
@@ -394,9 +394,14 @@ def sync(full=False, quiet=False):
         if stop_before and edited < stop_before:
             break
         add(o)
-    # 2) DBを直接読む。全体同期なら全DB、差分なら aliases.json のDBだけ
+    # 2) DBを直接読む。全体同期なら全DB、差分なら「別名をつけたDB＋ページ数の多いDB上位5つ」
     if stop_before:
-        dbs = {norm_id(v) for v in aliases().values()}
+        counts = {}
+        for it in idx["items"].values():
+            if it["p"]:
+                counts[it["p"]] = counts.get(it["p"], 0) + 1
+        big = [i for i, _ in sorted(counts.items(), key=lambda x: -x[1]) if idx["items"].get(i, {}).get("o") == "db"][:5]
+        dbs = {norm_id(v) for v in aliases().values()} | set(big)
     else:
         dbs = {i for i, it in idx["items"].items() if it["o"] == "db" and not it.get("x")}
     q = {}
@@ -636,8 +641,28 @@ def cmd_sync(a):
     sync(full=a.full)
 
 
+def cmd_alias(a):
+    al = aliases()
+    if a.name and a.id:
+        al[a.name] = norm_id(a.id)
+        ALIASES.parent.mkdir(parents=True, exist_ok=True)
+        ALIASES.write_text(json.dumps(al, ensure_ascii=False, indent=2))
+        print(f"{a.name} → {al[a.name]}")
+    elif a.name:
+        al.pop(a.name, None)
+        ALIASES.write_text(json.dumps(al, ensure_ascii=False, indent=2))
+        print(f"{a.name} を消した")
+    else:
+        idx = load_index()
+        for k, v in al.items():
+            t = idx["items"].get(norm_id(v), {}).get("t", "")
+            print(f"{k}\t{v}\t{t}")
+        if not al:
+            print(f"別名なし。`nn alias 名前 <IDかURL>` で {ALIASES} に保存される")
+
+
 def main():
-    ap = argparse.ArgumentParser(prog="nn", description="NUTMEG Notion 読み取りCLI。IDの代わりにNotionのURLや別名（aliases.json）も使える")
+    ap = argparse.ArgumentParser(prog="nn", description="NUTMEG Notion 読み取りCLI。IDの代わりにNotionのURLや別名（nn alias）も使える")
     sp = ap.add_subparsers(dest="cmd", required=True)
 
     p = sp.add_parser("find", help="タイトルで探す（手元の索引を使う）")
@@ -685,6 +710,11 @@ def main():
     p.add_argument("--filter-json", help="Notion APIのfilterをそのまま")
     p.add_argument("--limit", type=int, default=30)
     p.set_defaults(f=cmd_db)
+
+    p = sp.add_parser("alias", help="別名の一覧／登録（nn alias 名前 ID）／削除（nn alias 名前）")
+    p.add_argument("name", nargs="?")
+    p.add_argument("id", nargs="?")
+    p.set_defaults(f=cmd_alias)
 
     p = sp.add_parser("sync", help="索引を差分で更新")
     p.add_argument("--full", action="store_true", help="作り直す")

@@ -6,11 +6,11 @@ description: NUTMEG（NUTFes技術局）のNotionワークスペースを読み�
 # nutmeg-notion-connect
 
 `nn` は NUTMEG の Notion を読むためのCLI（PATHに入っている。無ければ `python3 ~/.claude/skills/nutmeg-notion-connect/nn.py`）。
-IDの代わりに NotionのURL・ハイフンなしID・別名（`aliases.json`：`articles`、`members`）を渡してよい。
+IDの代わりに NotionのURL・ハイフンなしID・別名を渡してよい。別名は `nn alias` で一覧、`nn alias 名前 <IDかURL>` で登録（`~/.config/nutmeg-notion/aliases.json` に保存。よく使うDBにつけておく）。
 
 ## 基本の流れ（トークンを節約する順）
 
-1. 探す：`nn find 46th 企画書` … 手元の索引からタイトル検索（API0回）。`--since 2026-10-01` `--db articles` `--type db` で絞れる
+1. 探す：`nn find 46th 企画書` … 手元の索引からタイトル検索（API0回）。`--since 2026-10-01` `--db <別名>` `--type db` で絞れる
 2. 形をつかむ：`nn outline <id>` … 見出しと各セクションの行数だけ
 3. 必要なところだけ読む：`nn read <id> -s アイスブレイク` … 見出しに含まれる文字で指定
 4. 全文は最後の手段：`nn read <id>`（12000字を超えると見出し一覧だけ返る。`--all` で全部）
@@ -27,7 +27,7 @@ IDの代わりに NotionのURL・ハイフンなしID・別名（`aliases.json`�
 - ページは `~/.cache/nutmeg-notion/pages/` にmarkdownで保存。`read` などは更新日時を1回だけ確認して、変わってなければキャッシュを返す
 - 入れ子の多いページは初回だけ数十秒かかる。同じページを何度も取り直さない
 - `--cached` で更新確認もしない（API0回）。`--fresh` で強制的に取り直す
-- 索引は `find` のときに10分おきに自動で差分同期。新しく作られたページが見つからないときは `nn sync`、DBが増えたときは `nn sync --full`（1分ちょっと）
+- 索引は `find` のときに10分おきに自動で差分同期（検索API＋別名つきDB＋ページ数の多いDB）。新しく作られたページが見つからないときは `nn sync`、DBが増えたときは `nn sync --full`（1分ちょっと）
 
 ## 注意
 
