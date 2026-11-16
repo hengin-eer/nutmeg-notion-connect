@@ -18,7 +18,10 @@ import (
 // edit may have missed later edits in the same minute; such entries are refetched.
 const editSettle = 90 * time.Second
 
+const formatVersion = 2
+
 type Meta struct {
+	Format     int     `json:"format"`
 	ID         string  `json:"id"`
 	Title      string  `json:"title"`
 	Edited     string  `json:"edited"`
@@ -28,7 +31,7 @@ type Meta struct {
 }
 
 type Options struct {
-	Links      bool // render URLs (cached separately)
+	Links      bool // include URLs in output (one shared cache)
 	Fresh      bool // ignore the cache
 	CachedOnly bool // no API calls when a cached copy exists
 }
@@ -45,29 +48,32 @@ type Store struct {
 	Client func() *notion.Client // created lazily so --cached never needs a key
 }
 
-func (s *Store) paths(id string, links bool) (md, meta, prev string) {
-	suffix := ""
-	if links {
-		suffix = ".links"
-	}
-	base := filepath.Join(s.Dir, id+suffix)
+func (s *Store) paths(id string) (md, meta, prev string) {
+	base := filepath.Join(s.Dir, id)
 	return base + ".md", base + ".json", base + ".prev.md"
+}
+
+func display(body string, links bool) string {
+	if links {
+		return body
+	}
+	return render.WithoutLinks(body)
 }
 
 // Load returns the page markdown, using the cache when the page has not changed.
 func (s *Store) Load(id string, opt Options) (string, Meta, error) {
-	mdPath, metaPath, prevPath := s.paths(id, opt.Links)
+	mdPath, metaPath, prevPath := s.paths(id)
 	var old *Meta
 	if b, err := os.ReadFile(metaPath); err == nil {
 		var m Meta
-		if json.Unmarshal(b, &m) == nil {
+		if json.Unmarshal(b, &m) == nil && m.Format == formatVersion {
 			old = &m
 		}
 	}
 	cached, cacheErr := os.ReadFile(mdPath)
 	hasCache := old != nil && cacheErr == nil
 	if opt.CachedOnly && hasCache {
-		return string(cached), *old, nil
+		return display(string(cached), opt.Links), *old, nil
 	}
 
 	c := s.Client()
@@ -85,28 +91,21 @@ func (s *Store) Load(id string, opt Options) (string, Meta, error) {
 		if t, err := time.Parse(time.RFC3339, edited); err == nil {
 			fetched := time.Unix(int64(old.Fetched), 0)
 			if fetched.Sub(t) > editSettle {
-				return string(cached), *old, nil
+				return display(string(cached), opt.Links), *old, nil
 			}
 		}
 	}
 
-	r := &render.Renderer{Links: opt.Links, Fetch: func(bid string) ([]notion.Obj, error) {
-		var out []notion.Obj
-		err := c.Paginate("blocks/"+bid+"/children", nil, func(o notion.Obj) error {
-			out = append(out, o)
-			return nil
-		})
-		return out, err
-	}}
-	body, err := r.Page(id)
+	raw, err := render.Markdown(c.Get, id)
 	if err != nil {
 		return "", Meta{}, err
 	}
+	body := render.Squash(raw, true)
 	meta := Meta{
-		ID: id, Title: notion.Title(page), Edited: edited,
+		Format: formatVersion, ID: id, Title: notion.Title(page), Edited: edited,
 		Fetched: float64(time.Now().Unix()), URL: notion.Str(page, "url"),
 	}
-	if cacheErr == nil && string(cached) != body {
+	if hasCache && string(cached) != body {
 		if err := fsutil.WriteFileAtomic(prevPath, cached, 0o600); err != nil {
 			return "", Meta{}, err
 		}
@@ -116,6 +115,11 @@ func (s *Store) Load(id string, opt Options) (string, Meta, error) {
 	} else if old != nil {
 		meta.PrevEdited = old.PrevEdited
 	}
+	if !hasCache {
+		if err := os.Remove(prevPath); err != nil && !os.IsNotExist(err) {
+			return "", Meta{}, err
+		}
+	}
 	if err := fsutil.WriteFileAtomic(mdPath, []byte(body), 0o600); err != nil {
 		return "", Meta{}, err
 	}
@@ -123,15 +127,15 @@ func (s *Store) Load(id string, opt Options) (string, Meta, error) {
 	if err := fsutil.WriteFileAtomic(metaPath, mb, 0o600); err != nil {
 		return "", Meta{}, err
 	}
-	return body, meta, nil
+	return display(body, opt.Links), meta, nil
 }
 
 // Prev returns the previous version saved when the page last changed.
 func (s *Store) Prev(id string) (string, bool) {
-	_, _, prevPath := s.paths(id, false)
+	_, _, prevPath := s.paths(id)
 	b, err := os.ReadFile(prevPath)
 	if err != nil {
 		return "", false
 	}
-	return string(b), true
+	return render.WithoutLinks(string(b)), true
 }

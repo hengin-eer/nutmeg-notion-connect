@@ -84,3 +84,25 @@ func TestLocalSurvey(t *testing.T) {
 		t.Logf("sample %d: before=%d v2=%d after=%d ratio=%.3f", i+1, len([]rune(string(old))), len([]rune(string(raw))), len([]rune(out)), float64(len([]rune(out)))/float64(len([]rune(string(old)))))
 	}
 }
+
+func TestStyledLinkLabels(t *testing.T) {
+	input := "[<b>A</b> `B`](https://example.test)\n"
+	if got := Squash(input, false); got != "A `B`\n" {
+		t.Fatalf("label: %q", got)
+	}
+	if got := WithoutLinks(Squash(input, true)); got != Squash(input, false) {
+		t.Fatalf("projection: %q", got)
+	}
+}
+
+func TestEscapedLinkSyntax(t *testing.T) {
+	for _, input := range []string{`\[literal\]\(https://example.test\)`, "\\`[code-like](https://example.test)\\`", `a\\b`, `\[text\] [link](https://example.test)`} {
+		want := Squash(input, false)
+		if got := WithoutLinks(Squash(input, true)); got != want {
+			t.Errorf("input=%q got=%q want=%q", input, got, want)
+		}
+	}
+	if got := Squash(`\[literal\]\(https://example.test\)`, false); got != "[literal](https://example.test)\n" {
+		t.Errorf("literal link syntax: %q", got)
+	}
+}

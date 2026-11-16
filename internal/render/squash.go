@@ -3,6 +3,7 @@ package render
 import (
 	"html"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -50,6 +51,32 @@ func parseSyntax(s string, tagsEnabled bool) *node {
 			i += 2
 			add(&node{text: s[start:i]})
 			continue
+		}
+		// Consume links as a unit so code and styled spans in labels cannot
+		// split the URL away from its label.
+		labelStart := i
+		image := s[i] == '!' && i+1 < len(s) && s[i+1] == '['
+		if image {
+			labelStart++
+		}
+		if s[labelStart] == '[' {
+			labelEnd := balanced(s, labelStart, '[', ']')
+			if labelEnd >= 0 && labelEnd+1 < len(s) && s[labelEnd+1] == '(' {
+				end := balanced(s, labelEnd+1, '(', ')')
+				if end >= 0 {
+					if tagsEnabled {
+						n := &node{tag: "markdown-link", attrs: map[string]string{"source": s[labelEnd+2 : end]}, children: parse(s[labelStart+1 : labelEnd]).children}
+						if image {
+							n.attrs["image"] = "true"
+						}
+						add(n)
+					} else {
+						add(&node{text: s[i : end+1]})
+					}
+					i = end + 1
+					continue
+				}
+			}
 		}
 		// Both inline code and fenced blocks are copied byte for byte.
 		if s[i] == '`' || (s[i] == '~' && (i == 0 || s[i-1] == '\n' || s[i-1] == ' ' || s[i-1] == '\t')) {
@@ -154,7 +181,7 @@ func parseSyntax(s string, tagsEnabled bool) *node {
 			}
 		}
 		i++
-		for i < len(s) && !strings.ContainsRune("<`~\\", rune(s[i])) {
+		for i < len(s) && !strings.ContainsRune("<`~\\[!", rune(s[i])) {
 			i++
 		}
 		add(&node{text: s[start:i]})
@@ -177,11 +204,24 @@ func renderNode(n *node, links bool) string {
 	}
 	var b strings.Builder
 	for _, c := range n.children {
-		b.WriteString(renderNode(c, links))
+		b.WriteString(renderNode(c, links && n.tag != "markdown-link"))
 	}
 	s := b.String()
 	t := strings.TrimSpace(s)
 	switch n.tag {
+	case "markdown-link":
+		if n.attrs["image"] == "true" {
+			if s == "" {
+				s = "[image]"
+			} else {
+				s = "[image: " + s + "]"
+			}
+		}
+		if links && !signed(n.attrs["source"]) {
+			return "[" + escapeLabel(s) + "](" + n.attrs["source"] + ")"
+		}
+		return s
+
 	case "b", "strong", "i", "em", "u", "s", "del", "span":
 		return s
 	case "code":
@@ -220,7 +260,7 @@ func renderNode(n *node, links bool) string {
 			num++
 			prefix := "- "
 			if n.tag == "ol" {
-				prefix = itoa(num) + ". "
+				prefix = strconv.Itoa(num) + ". "
 			}
 			v := strings.TrimSpace(renderNode(c, links))
 			out.WriteString(prefix + strings.ReplaceAll(v, "\n", "\n  ") + "\n")
@@ -285,12 +325,6 @@ func fallback(s, d string) string {
 	}
 	return s
 }
-func itoa(i int) string {
-	if i < 10 {
-		return string(rune('0' + i))
-	}
-	return itoa(i/10) + itoa(i%10)
-}
 func signed(u string) bool {
 	s := strings.ToLower(u)
 	return strings.Contains(s, "prod-files-secure") || strings.Contains(s, "x-amz-")
@@ -343,7 +377,10 @@ func inlineMode(s string, links, decode bool) string {
 	var out strings.Builder
 	for i := 0; i < len(s); {
 		if s[i] == '\\' && i+1 < len(s) && strings.ContainsRune(`!"#$%&'()*+,-./:;<=>?@[\]^_`+"`"+`{|}~`, rune(s[i+1])) {
-			if !decode {
+			// Retain syntax-significant escapes in the shared Markdown cache.
+			// Projection removes them without treating the literal as a link.
+			critical := strings.ContainsRune("[]()`\\", rune(s[i+1]))
+			if (decode && links && critical) || (!decode && !critical) {
 				out.WriteByte(s[i])
 			}
 			out.WriteByte(s[i+1])
@@ -370,7 +407,7 @@ func inlineMode(s string, links, decode bool) string {
 						}
 					}
 					if links && !signed(url) {
-						out.WriteString("[" + strings.NewReplacer(`\`, `\\`, "[", `\[`, "]", `\]`).Replace(label) + "](" + url + ")")
+						out.WriteString("[" + escapeLabel(label) + "](" + url + ")")
 					} else {
 						out.WriteString(label)
 					}
@@ -387,6 +424,9 @@ func inlineMode(s string, links, decode bool) string {
 		return html.UnescapeString(out.String())
 	}
 	return out.String()
+}
+func escapeLabel(s string) string {
+	return strings.NewReplacer(`\`, `\\`, "[", `\[`, "]", `\]`).Replace(s)
 }
 func balanced(s string, start int, open, close byte) int {
 	depth := 0
@@ -437,7 +477,7 @@ func compact(s string) string {
 	var codes []string
 	for _, n := range root.children {
 		if n.raw {
-			b.WriteString(marker + itoa(len(codes)) + "\x00")
+			b.WriteString(marker + strconv.Itoa(len(codes)) + "\x00")
 			codes = append(codes, n.text)
 		} else {
 			b.WriteString(n.text)
@@ -452,7 +492,7 @@ func compact(s string) string {
 	}
 	out := strings.Join(lines, "\n")
 	for i, code := range codes {
-		out = strings.ReplaceAll(out, marker+itoa(i)+"\x00", code)
+		out = strings.ReplaceAll(out, marker+strconv.Itoa(i)+"\x00", code)
 	}
 	return out
 }
