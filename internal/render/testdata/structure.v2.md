@@ -3,18 +3,30 @@
 <p><b>架空の</b><span color="blue" discussion-urls="https://example.test/comment">案内</span></p>
 <toggle>
 開く
-  <toggle>
-  内側
-    中身
-  </toggle>
+
+<toggle>
+内側
+
+中身
+</toggle>
 </toggle>
 <toggle heading="h3">
 見出し
-  内容
+
+内容
 </toggle>
 <callout color="gray" icon="💡">
 注意 <u>確認</u>
+
+### 中の見出し
+
+- 中の項目
 </callout>
+<quote>
+引用
+
+続き
+</quote>
 <synced-block url="https://example.test/sync">
 <ul><li>親<ul><li>子</li><li><i>次</i></li></ul></li><li>隣</li></ul>
 <ol><li>一</li><li>二</li></ol>

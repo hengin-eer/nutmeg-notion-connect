@@ -234,19 +234,19 @@ func renderNode(n *node, links bool) string {
 	case "br":
 		return " "
 	case "toggle":
-		prefix := "▸ "
 		if h := n.attrs["heading"]; len(h) == 2 && h[0] == 'h' && h[1] >= '1' && h[1] <= '4' {
-			prefix = strings.Repeat("#", int(h[1]-'0')) + " "
+			// Toggle-heading content belongs to the section, so it stays unindented.
+			return strings.Repeat("#", int(h[1]-'0')) + " " + t + "\n"
 		}
-		return prefix + t + "\n"
+		return container("▸ ", t)
 	case "callout":
 		prefix := "> "
 		if icon := n.attrs["icon"]; icon != "" {
 			prefix += icon + " "
 		}
-		return prefix + t + "\n"
+		return container(prefix, t)
 	case "quote":
-		return "> " + t + "\n"
+		return container("> ", t)
 	case "ul", "ol":
 		var out strings.Builder
 		num := 0
@@ -317,6 +317,18 @@ func renderNode(n *node, links bool) string {
 	default:
 		return s
 	}
+}
+
+// container puts the title after prefix and indents the children beneath it,
+// so headings inside toggles and callouts are not taken for page headings.
+func container(prefix, t string) string {
+	lines := strings.Split(t, "\n")
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != "" {
+			lines[i] = "  " + lines[i]
+		}
+	}
+	return prefix + strings.Join(lines, "\n") + "\n"
 }
 
 func fallback(s, d string) string {
