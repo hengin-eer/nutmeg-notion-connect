@@ -3,6 +3,8 @@ package render
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -88,8 +90,14 @@ func TestLocalSurvey(t *testing.T) {
 		out := Squash(string(raw), false)
 		before, after := len([]rune(baseline)), len([]rune(out))
 		t.Logf("sample %d: before_body=%d v2=%d after_body=%d ratio=%.3f", i+1, before, len([]rune(string(raw))), after, float64(after)/float64(before))
-		if after > before {
-			t.Error("converted body exceeds baseline length")
+		// Inline code keeps its backticks now, so allow a little growth.
+		if float64(after) > float64(before)*1.05 {
+			t.Errorf("sample %d: converted body exceeds baseline length by more than 5%%", i+1)
+		}
+		// Headings drive outline and -s; those inside toggles and callouts
+		// must stay indented so the page's own headings are unchanged.
+		if got, want := headingKeys(out), headingKeys(baseline); !slices.Equal(got, want) {
+			t.Errorf("sample %d: headings differ: %d before, %d after (private content withheld)", i+1, len(want), len(got))
 		}
 		if WithoutLinks(Squash(string(raw), true)) != out {
 			t.Error("cached projection differs (private content withheld)")
@@ -116,5 +124,27 @@ func TestEscapedLinkSyntax(t *testing.T) {
 	}
 	if got := Squash(`\[literal\]\(https://example.test\)`, false); got != "[literal](https://example.test)\n" {
 		t.Errorf("literal link syntax: %q", got)
+	}
+}
+
+func headingKeys(body string) []string {
+	var keys []string
+	for _, h := range Headings(body) {
+		keys = append(keys, strconv.Itoa(h.Level)+" "+strings.TrimSpace(h.Text))
+	}
+	return keys
+}
+
+// Real v2 output does not indent container children; nn must, or headings
+// inside a callout would be listed as the page's own headings.
+func TestContainerChildrenIndented(t *testing.T) {
+	in := "<callout icon=\"💡\">\nテンプレート\n\n## 中の見出し\n\n- 項目\n</callout>\n## 本物\n<toggle>\n議事録\n\nメモ\n</toggle>\n"
+	want := "> 💡 テンプレート\n  ## 中の見出し\n  - 項目\n## 本物\n▸ 議事録\n  メモ\n"
+	out := Squash(in, false)
+	if out != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", out, want)
+	}
+	if got := headingKeys(out); !slices.Equal(got, []string{"2 本物"}) {
+		t.Fatalf("headings: %v", got)
 	}
 }
