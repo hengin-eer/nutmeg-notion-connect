@@ -80,8 +80,20 @@ func TestLocalSurvey(t *testing.T) {
 		if err != nil {
 			t.Fatal("read baseline")
 		}
+		// Saved nn output includes a CLI header; compare body with body.
+		_, baseline, ok := strings.Cut(string(old), "\n")
+		if !ok {
+			t.Fatal("baseline header missing")
+		}
 		out := Squash(string(raw), false)
-		t.Logf("sample %d: before=%d v2=%d after=%d ratio=%.3f", i+1, len([]rune(string(old))), len([]rune(string(raw))), len([]rune(out)), float64(len([]rune(out)))/float64(len([]rune(string(old)))))
+		before, after := len([]rune(baseline)), len([]rune(out))
+		t.Logf("sample %d: before_body=%d v2=%d after_body=%d ratio=%.3f", i+1, before, len([]rune(string(raw))), after, float64(after)/float64(before))
+		if after > before {
+			t.Error("converted body exceeds baseline length")
+		}
+		if WithoutLinks(Squash(string(raw), true)) != out {
+			t.Error("cached projection differs (private content withheld)")
+		}
 	}
 }
 
