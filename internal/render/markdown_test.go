@@ -50,6 +50,7 @@ func TestMarkdownExpansion(t *testing.T) {
 		}
 	}
 }
+
 // Only the page itself is required; anything below it degrades to a partial page.
 func TestMarkdownErrors(t *testing.T) {
 	for _, tc := range []struct {

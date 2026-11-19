@@ -160,3 +160,62 @@ func TestPartialPageIsRefetched(t *testing.T) {
 		t.Fatal("a partial copy must not become the previous version")
 	}
 }
+
+// Prefetch uses the index's edit time instead of a page lookup, and the
+// previous version stays the last one read, however many prefetches follow.
+func TestPrefetchKeepsLastReadVersion(t *testing.T) {
+	dir := t.TempDir()
+	edited, body := "2020-01-01T00:00:00Z", "v1"
+	pageCalls, markdownCalls := 0, 0
+	original := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = original })
+	http.DefaultTransport = transport(func(r *http.Request) (*http.Response, error) {
+		var o notion.Obj
+		switch r.URL.Path {
+		case "/v1/pages/page":
+			pageCalls++
+			o = notion.Obj{"last_edited_time": edited, "properties": notion.Obj{}}
+		case "/v1/pages/page/markdown":
+			markdownCalls++
+			o = notion.Obj{"markdown": body}
+		default:
+			t.Fatalf("unexpected endpoint %s", r.URL.Path)
+		}
+		b, _ := json.Marshal(o)
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(b)))}, nil
+	})
+	store := Store{Dir: dir, Client: func() *notion.Client { return notion.New("synthetic") }}
+	prefetch := func(want bool) {
+		t.Helper()
+		ok, err := store.Prefetch("page", "Title", edited)
+		if err != nil || ok != want {
+			t.Fatalf("prefetch: ok=%v err=%v", ok, err)
+		}
+	}
+
+	if _, _, err := store.Load("page", Options{}); err != nil { // read v1
+		t.Fatal(err)
+	}
+	edited, body = "2020-01-02T00:00:00Z", "v2"
+	prefetch(true)
+	prefetch(false) // already current: no request
+	edited, body = "2020-01-03T00:00:00Z", "v3"
+	prefetch(true)
+	if pageCalls != 1 || markdownCalls != 3 {
+		t.Fatalf("prefetch must not look up the page: page=%d markdown=%d", pageCalls, markdownCalls)
+	}
+	if prev, ok := store.Prev("page"); !ok || prev != "v1\n" {
+		t.Fatalf("previous must be the last read version: %q %v", prev, ok)
+	}
+
+	// Reading the prefetched copy costs only the update check and marks it read.
+	got, m, err := store.Load("page", Options{})
+	if err != nil || got != "v3\n" || m.Unseen || m.PrevEdited != "2020-01-01T00:00:00Z" || markdownCalls != 3 {
+		t.Fatalf("read prefetched: %q %+v %v markdown=%d", got, m, err, markdownCalls)
+	}
+	edited, body = "2020-01-04T00:00:00Z", "v4"
+	prefetch(true)
+	if prev, _ := store.Prev("page"); prev != "v3\n" {
+		t.Fatalf("after reading v3, previous must be v3: %q", prev)
+	}
+}

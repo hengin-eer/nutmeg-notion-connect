@@ -33,7 +33,7 @@ NUTMEG ワークスペース用の Notion インテグレーションキーを�
 
 ```sh
 nn auth login     # キーを貼り付ける（画面には出ない）。保存前に使えるか確かめる
-nn sync --full    # 索引を作る（1分ほど）
+nn sync --full    # 索引を作り、最近のページを先読みする（1〜2分）
 ```
 
 - キーは `~/.config/nutmeg-notion-connect/credentials`（本人だけ読める）に保存される

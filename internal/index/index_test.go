@@ -51,3 +51,16 @@ func TestLargestDBs(t *testing.T) {
 		t.Errorf("largest: %v", got)
 	}
 }
+
+func TestPrefetchTargets(t *testing.T) {
+	ix := sample()
+	since := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	// Aliases come first even when old; DBs, trashed, unknown and old pages are skipped.
+	got := ix.PrefetchTargets([]string{"p5", "db1", "missing", "p5"}, since, 10)
+	if strings.Join(got, ",") != "p5,p1,p3" {
+		t.Errorf("targets: %v", got)
+	}
+	if got := ix.PrefetchTargets(nil, since, 1); strings.Join(got, ",") != "p1" {
+		t.Errorf("max: %v", got)
+	}
+}

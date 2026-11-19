@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 
@@ -509,6 +510,9 @@ func (a *app) cmdAlias(args []string) error {
 func (a *app) cmdSync(args []string) error {
 	fs := newFlags("sync")
 	full := fs.Bool("full", false, "索引を作り直す（1分ほど）")
+	noPrefetch := fs.Bool("no-prefetch", false, "ページの先読みをしない")
+	days := fs.Int("prefetch-days", 7, "この日数以内に更新されたページを先読みする")
+	max := fs.Int("prefetch-max", 30, "先読みするページの上限")
 	if _, err := parse(fs, args); err != nil {
 		return err
 	}
@@ -524,7 +528,48 @@ func (a *app) cmdSync(args []string) error {
 		return err
 	}
 	fmt.Fprintf(a.errOut, "同期しました: %d件取得 / 合計%d件\n", n, len(ix.Items))
+	if *noPrefetch || *max <= 0 {
+		return nil
+	}
+	a.prefetch(ix, time.Now().AddDate(0, 0, -*days), *max)
 	return nil
+}
+
+// prefetch caches recently edited and aliased pages so that the next read
+// needs only the update check. Failures are reported and skipped: the index
+// is already saved, and the page will be fetched when it is read.
+func (a *app) prefetch(ix *index.Index, since time.Time, max int) {
+	st := a.store()
+	ids := ix.PrefetchTargets(a.aliasIDs(), since, max)
+	fetched, upToDate, failed := 0, 0, 0
+	for _, id := range ids {
+		it := ix.Items[id]
+		ok, err := st.Prefetch(id, it.Title, it.Edited)
+		switch {
+		case err != nil:
+			failed++
+			// Offline or rate limited: the rest would fail the same way.
+			var apiErr *notion.Error
+			if !errors.As(err, &apiErr) {
+				fmt.Fprintf(a.errOut, "先読みを中断しました（%v）\n", err)
+				failed = len(ids) - fetched - upToDate
+			}
+		case ok:
+			if fetched++; fetched%10 == 0 {
+				fmt.Fprintf(a.errOut, "  ...%d件\n", fetched)
+			}
+		default:
+			upToDate++
+		}
+		if fetched+upToDate+failed == len(ids) {
+			break
+		}
+	}
+	msg := fmt.Sprintf("先読みしました: %d件取得 / %d件は最新", fetched, upToDate)
+	if failed > 0 {
+		msg += fmt.Sprintf(" / %d件は取れませんでした（読むときに取り直します）", failed)
+	}
+	fmt.Fprintln(a.errOut, msg)
 }
 
 func (a *app) cmdAuth(args []string) error {

@@ -31,6 +31,10 @@ type Meta struct {
 	// Omitted counts truncated parts that could not be fetched. Such a page is
 	// shown with a warning and fetched again on the next read.
 	Omitted int `json:"omitted,omitempty"`
+	// Unseen marks a copy fetched ahead of time and not yet read. The previous
+	// version stays the last one that was read, so diff still means
+	// "since you last read it".
+	Unseen bool `json:"unseen,omitempty"`
 }
 
 type Options struct {
@@ -63,20 +67,45 @@ func display(body string, links bool) string {
 	return render.WithoutLinks(body)
 }
 
-// Load returns the page markdown, using the cache when the page has not changed.
-func (s *Store) Load(id string, opt Options) (string, Meta, error) {
-	mdPath, metaPath, prevPath := s.paths(id)
-	var old *Meta
+func (s *Store) cached(id string) (old *Meta, cached []byte, ok bool) {
+	mdPath, metaPath, _ := s.paths(id)
 	if b, err := os.ReadFile(metaPath); err == nil {
 		var m Meta
 		if json.Unmarshal(b, &m) == nil && m.Format == formatVersion {
 			old = &m
 		}
 	}
-	cached, cacheErr := os.ReadFile(mdPath)
-	hasCache := old != nil && cacheErr == nil
+	cached, err := os.ReadFile(mdPath)
+	return old, cached, old != nil && err == nil
+}
+
+// current reports whether a cached copy is still the page edited at edited.
+func current(old *Meta, edited string) bool {
+	if old.Edited != edited || old.Omitted != 0 {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, edited)
+	return err == nil && time.Unix(int64(old.Fetched), 0).Sub(t) > editSettle
+}
+
+// seen returns a cached copy as read, clearing the prefetch mark.
+func (s *Store) seen(id string, old *Meta, cached []byte, links bool) (string, Meta, error) {
+	if old.Unseen {
+		old.Unseen = false
+		_, metaPath, _ := s.paths(id)
+		mb, _ := json.Marshal(old)
+		if err := fsutil.WriteFileAtomic(metaPath, mb, 0o600); err != nil {
+			return "", Meta{}, err
+		}
+	}
+	return display(string(cached), links), *old, nil
+}
+
+// Load returns the page markdown, using the cache when the page has not changed.
+func (s *Store) Load(id string, opt Options) (string, Meta, error) {
+	old, cached, hasCache := s.cached(id)
 	if opt.CachedOnly && hasCache {
-		return display(string(cached), opt.Links), *old, nil
+		return s.seen(id, old, cached, opt.Links)
 	}
 
 	c := s.Client()
@@ -90,34 +119,51 @@ func (s *Store) Load(id string, opt Options) (string, Meta, error) {
 		return "", Meta{}, err
 	}
 	edited := notion.Str(page, "last_edited_time")
-	if hasCache && !opt.Fresh && old.Edited == edited && old.Omitted == 0 {
-		if t, err := time.Parse(time.RFC3339, edited); err == nil {
-			fetched := time.Unix(int64(old.Fetched), 0)
-			if fetched.Sub(t) > editSettle {
-				return display(string(cached), opt.Links), *old, nil
-			}
-		}
+	if hasCache && !opt.Fresh && current(old, edited) {
+		return s.seen(id, old, cached, opt.Links)
 	}
+	meta := Meta{Title: notion.Title(page), Edited: edited, URL: notion.Str(page, "url")}
+	body, meta, err := s.fetch(c, id, meta, old, cached, hasCache)
+	if err != nil {
+		return "", Meta{}, err
+	}
+	return display(body, opt.Links), meta, nil
+}
 
+// Prefetch caches a page ahead of time, using the title and edit time from the
+// index so that no page lookup is needed. It reports whether it fetched.
+func (s *Store) Prefetch(id, title, edited string) (bool, error) {
+	old, cached, hasCache := s.cached(id)
+	if hasCache && current(old, edited) {
+		return false, nil
+	}
+	meta := Meta{Title: title, Edited: edited, Unseen: true}
+	if old != nil {
+		meta.URL = old.URL
+	}
+	_, _, err := s.fetch(s.Client(), id, meta, old, cached, hasCache)
+	return err == nil, err
+}
+
+// fetch gets the body and saves it with meta (Title, Edited, URL, Unseen set).
+func (s *Store) fetch(c *notion.Client, id string, meta Meta, old *Meta, cached []byte, hasCache bool) (string, Meta, error) {
+	mdPath, metaPath, prevPath := s.paths(id)
 	content, err := render.Markdown(c.Get, id)
 	if err != nil {
 		return "", Meta{}, err
 	}
 	body := render.Squash(content.Markdown, true)
-	meta := Meta{
-		Format: formatVersion, ID: id, Title: notion.Title(page), Edited: edited,
-		Fetched: float64(time.Now().Unix()), URL: notion.Str(page, "url"),
-		Omitted: content.Omitted,
-	}
-	// A partial copy is not a real version: comparing with it would make diff
-	// report the missing parts as deletions, so it never becomes the previous one.
-	if hasCache && string(cached) != body && old.Omitted == 0 && meta.Omitted == 0 {
+	meta.Format, meta.ID = formatVersion, id
+	meta.Fetched = float64(time.Now().Unix())
+	meta.Omitted = content.Omitted
+	// The previous version is the last one read. A partial copy is not a real
+	// version (diff would show the missing parts as deletions), and an unread
+	// prefetched copy is not what the reader saw.
+	if hasCache && string(cached) != body && old.Omitted == 0 && meta.Omitted == 0 && !old.Unseen {
 		if err := fsutil.WriteFileAtomic(prevPath, cached, 0o600); err != nil {
 			return "", Meta{}, err
 		}
-		if old != nil {
-			meta.PrevEdited = old.Edited
-		}
+		meta.PrevEdited = old.Edited
 	} else if old != nil {
 		meta.PrevEdited = old.PrevEdited
 	}
@@ -133,7 +179,7 @@ func (s *Store) Load(id string, opt Options) (string, Meta, error) {
 	if err := fsutil.WriteFileAtomic(metaPath, mb, 0o600); err != nil {
 		return "", Meta{}, err
 	}
-	return display(body, opt.Links), meta, nil
+	return body, meta, nil
 }
 
 // Prev returns the previous version saved when the page last changed.

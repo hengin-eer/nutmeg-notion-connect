@@ -209,6 +209,40 @@ func (ix *Index) LargestDBs(n int) []string {
 	return ids
 }
 
+// PrefetchTargets lists pages worth caching ahead of time: the pages in first
+// (aliases) that the index knows, then pages edited since since, newest first.
+// DBs and trashed pages are skipped. At most max IDs are returned.
+func (ix *Index) PrefetchTargets(first []string, since time.Time, max int) []string {
+	var ids []string
+	seen := map[string]bool{}
+	add := func(id string) {
+		if it := ix.Items[id]; it != nil && it.Kind == "page" && !it.Archived && !seen[id] && len(ids) < max {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	for _, id := range first {
+		add(id)
+	}
+	var recent []string
+	for id, it := range ix.Items {
+		if t, err := time.Parse(time.RFC3339, it.Edited); err == nil && !t.Before(since) {
+			recent = append(recent, id)
+		}
+	}
+	sort.Slice(recent, func(i, j int) bool {
+		a, b := ix.Items[recent[i]].Edited, ix.Items[recent[j]].Edited
+		if a != b {
+			return a > b
+		}
+		return recent[i] < recent[j]
+	})
+	for _, id := range recent {
+		add(id)
+	}
+	return ids
+}
+
 // Hit is a search result.
 type Hit struct {
 	ID string
