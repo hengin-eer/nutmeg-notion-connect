@@ -61,7 +61,7 @@ func init() {
 		{"dbs", "[単語...]", "DBの一覧", (*app).cmdDBs},
 		{"db", "<id> [--schema] [--title X] [--where 列~x|列=x] [--since D] [--props a,b] [--filter-json J] [--limit N]", "DBの行をTSVで", (*app).cmdDB},
 		{"alias", "[名前 [<id>]]", "別名の一覧／登録／削除", (*app).cmdAlias},
-		{"sync", "[--full]", "索引を更新（--full で作り直し）", (*app).cmdSync},
+		{"sync", "[--full] [--no-prefetch]", "索引を更新し、最近のページを先読み（--full で作り直し）", (*app).cmdSync},
 		{"auth", "login|status|logout", "キーの登録・確認・削除", (*app).cmdAuth},
 		{"version", "", "バージョン", (*app).cmdVersion},
 	}
