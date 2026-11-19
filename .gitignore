@@ -6,3 +6,4 @@ bin/
 dist/
 bench/tasks.local.json
 bench/results/
+.worktree/

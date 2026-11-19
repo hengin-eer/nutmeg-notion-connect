@@ -28,6 +28,7 @@ const (
 // Error is a non-retryable API error with a hint in Japanese.
 type Error struct {
 	Status int
+	Code   string
 	Msg    string
 }
 
@@ -125,9 +126,9 @@ func (c *Client) do(method, path string, body any) (Obj, error) {
 			continue
 		}
 		if res.StatusCode >= 400 {
-			var e struct{ Message string }
+			var e struct{ Message, Code string }
 			_ = json.Unmarshal(data, &e)
-			return nil, &Error{Status: res.StatusCode, Msg: e.Message}
+			return nil, &Error{Status: res.StatusCode, Code: e.Code, Msg: e.Message}
 		}
 		var o Obj
 		if err := json.Unmarshal(data, &o); err != nil {
