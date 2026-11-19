@@ -32,10 +32,14 @@ func TestMarkdownExpansion(t *testing.T) {
 		}
 		return data[id], nil
 	}
-	got, err := Markdown(get, "root")
+	c, err := Markdown(get, "root")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if c.Omitted != 0 {
+		t.Errorf("omitted=%d", c.Omitted)
+	}
+	got := c.Markdown
 	want := "before\n  ## A\n  body\n  \n  `" + marker(hidden) + "`\nafter\n## A\nbody\n\n`" + marker(hidden) + "`\n[見られないブロック]"
 	if got != want {
 		t.Fatalf("got %q want %q", got, want)
@@ -46,15 +50,13 @@ func TestMarkdownExpansion(t *testing.T) {
 		}
 	}
 }
+// Only the page itself is required; anything below it degrades to a partial page.
 func TestMarkdownErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		obj  notion.Obj
 		err  error
 	}{
-		{"cycle", notion.Obj{"markdown": `<unknown url="https://example.test/root" />`, "truncated": true, "unknown_block_ids": []any{"root"}}, nil},
-		{"missing marker", notion.Obj{"markdown": "body", "truncated": true, "unknown_block_ids": []any{"missing"}}, nil},
-		{"missing IDs", notion.Obj{"markdown": "body", "truncated": true}, nil},
 		{"missing body", notion.Obj{}, nil},
 		{"network", nil, errors.New("offline")},
 	} {
@@ -65,16 +67,38 @@ func TestMarkdownErrors(t *testing.T) {
 		})
 	}
 }
-func TestMarkdownDoesNotHideErrors(t *testing.T) {
-	for _, code := range []string{"restricted_resource", "validation_error"} {
-		_, err := Markdown(func(path string) (notion.Obj, error) {
-			if strings.Contains(path, "pages/root/") {
-				return notion.Obj{"markdown": `<unknown url="https://example.test/child" />`, "truncated": true, "unknown_block_ids": []any{"child"}}, nil
+
+func TestMarkdownPartial(t *testing.T) {
+	child := `<unknown alt="block" url="https://example.test/root#child" />`
+	for _, tc := range []struct {
+		name     string
+		root     notion.Obj
+		childErr error
+		want     string
+	}{
+		{"cycle", notion.Obj{"markdown": "head\n" + `<unknown url="https://example.test/root" />`, "truncated": true, "unknown_block_ids": []any{"root"}}, nil, "head\n" + OmittedMark},
+		{"missing marker", notion.Obj{"markdown": "head", "truncated": true, "unknown_block_ids": []any{"missing"}}, nil, "head"},
+		{"unexpected URL form", notion.Obj{"markdown": "head\n" + `<unknown url="https://example.test/root#child?pvs=1" />`, "truncated": true, "unknown_block_ids": []any{"child"}}, nil, "head\n" + `<unknown url="https://example.test/root#child?pvs=1" />`},
+		{"missing IDs", notion.Obj{"markdown": "head\n" + child, "truncated": true}, nil, "head\n" + child},
+		{"rate limited", notion.Obj{"markdown": "head\n" + child + "\ntail", "truncated": true, "unknown_block_ids": []any{"child"}}, errors.New("再試行の上限に達しました"), "head\n" + OmittedMark + "\ntail"},
+		{"restricted", notion.Obj{"markdown": "head\n" + child, "truncated": true, "unknown_block_ids": []any{"child"}}, &notion.Error{Status: 403, Code: "restricted_resource"}, "head\n" + OmittedMark},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Markdown(func(path string) (notion.Obj, error) {
+				if strings.Contains(path, "pages/root/") {
+					return tc.root, nil
+				}
+				return nil, tc.childErr
+			}, "root")
+			if err != nil {
+				t.Fatalf("a partial page must still be returned: %v", err)
 			}
-			return nil, &notion.Error{Status: 403, Code: code}
-		}, "root")
-		if err == nil {
-			t.Fatal("permission or API errors must propagate")
-		}
+			if c.Omitted != 1 {
+				t.Errorf("omitted=%d", c.Omitted)
+			}
+			if c.Markdown != tc.want {
+				t.Errorf("got %q want %q", c.Markdown, tc.want)
+			}
+		})
 	}
 }

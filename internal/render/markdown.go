@@ -8,30 +8,48 @@ import (
 	"github.com/hengin-eer/nutmeg-notion-connect/internal/notion"
 )
 
+// OmittedMark replaces a truncated subtree that could not be fetched or placed.
+const OmittedMark = "[省略: 取れなかったブロック]"
+
+// Content is a page's v2 markdown. Omitted counts the places that are still
+// missing after trying to fill in truncated subtrees; such a page is partial.
+type Content struct {
+	Markdown string
+	Omitted  int
+}
+
 // Markdown retrieves v2 content, replacing truncated subtrees in place. Requests
 // are serial; memoization prevents repeated requests for shared synced blocks.
-func Markdown(get func(string) (notion.Obj, error), id string) (string, error) {
-	memo := map[string]string{}
+// Only a failure to fetch the page itself is an error. A subtree that cannot be
+// fetched or placed is marked with OmittedMark and counted in Content.Omitted,
+// so a huge page is still readable up to what Notion returned.
+func Markdown(get func(string) (notion.Obj, error), id string) (Content, error) {
+	type result struct {
+		body    string
+		omitted int
+	}
+	memo := map[string]result{}
 	active := map[string]bool{}
-	var load func(string) (string, error)
-	load = func(id string) (string, error) {
+	var load func(string) (result, error)
+	load = func(id string) (result, error) {
 		key := normalizeID(id)
-		if body, ok := memo[key]; ok {
-			return body, nil
+		if r, ok := memo[key]; ok {
+			return r, nil
 		}
 		if active[key] {
-			return "", errors.New("Markdown API の不足ブロックが循環しています")
+			return result{}, errors.New("Markdown API の不足ブロックが循環しています")
 		}
 		active[key] = true
 		defer delete(active, key)
 		obj, err := get("pages/" + id + "/markdown?markdown_version=v2")
 		if err != nil {
-			return "", err
+			return result{}, err
 		}
 		body, ok := obj["markdown"].(string)
 		if !ok {
-			return "", errors.New("Markdown API の応答に本文がありません")
+			return result{}, errors.New("Markdown API の応答に本文がありません")
 		}
+		omitted := 0
 		if notion.Bool(obj, "truncated") {
 			type replacement struct {
 				start, end int
@@ -49,28 +67,32 @@ func Markdown(get func(string) (notion.Obj, error), id string) (string, error) {
 				}
 			}
 			walk(parse(body))
-			for _, v := range notion.Arr(obj, "unknown_block_ids") {
-				bid, ok := v.(string)
-				if !ok || bid == "" {
-					return "", errors.New("Markdown API の不足ブロックIDが不正です")
-				}
+			ids := notion.Arr(obj, "unknown_block_ids")
+			if len(ids) == 0 {
+				// Truncated, but Notion did not say where: keep what we have.
+				omitted++
+			}
+			for _, v := range ids {
+				bid, _ := v.(string)
 				var matches []*node
 				for _, n := range unknown {
-					if normalizeID(urlID(n.attrs["url"])) == normalizeID(bid) {
+					if bid != "" && normalizeID(urlID(n.attrs["url"])) == normalizeID(bid) {
 						matches = append(matches, n)
 					}
 				}
 				if len(matches) == 0 {
-					return "", errors.New("Markdown API の不足ブロックの挿入位置が見つかりません")
+					// No place to put it, e.g. an unexpected URL form.
+					omitted++
+					continue
 				}
 				sub, err := load(bid)
 				if err != nil {
 					var apiErr *notion.Error
 					if errors.As(err, &apiErr) && apiErr.Code == "object_not_found" {
-						sub = "[見られないブロック]"
+						sub = result{body: "[見られないブロック]"}
 						memo[normalizeID(bid)] = sub
 					} else {
-						return "", err
+						sub = result{body: OmittedMark, omitted: 1}
 					}
 				}
 				for _, n := range matches {
@@ -79,11 +101,9 @@ func Markdown(get func(string) (notion.Obj, error), id string) (string, error) {
 					if strings.TrimSpace(indent) != "" {
 						indent = ""
 					}
-					changes = append(changes, replacement{n.start, n.end, strings.ReplaceAll(strings.TrimRight(sub, "\n"), "\n", "\n"+indent)})
+					changes = append(changes, replacement{n.start, n.end, strings.ReplaceAll(strings.TrimRight(sub.body, "\n"), "\n", "\n"+indent)})
+					omitted += sub.omitted
 				}
-			}
-			if len(changes) == 0 {
-				return "", errors.New("Markdown API の本文が省略されていますが不足ブロックIDがありません")
 			}
 			sort.Slice(changes, func(i, j int) bool { return changes[i].start > changes[j].start })
 			last := len(body)
@@ -95,9 +115,11 @@ func Markdown(get func(string) (notion.Obj, error), id string) (string, error) {
 				last = c.start
 			}
 		}
-		memo[key] = body
-		return body, nil
+		r := result{body, omitted}
+		memo[key] = r
+		return r, nil
 	}
-	return load(id)
+	r, err := load(id)
+	return Content{Markdown: r.body, Omitted: r.omitted}, err
 }
 func normalizeID(id string) string { return strings.ToLower(strings.ReplaceAll(id, "-", "")) }

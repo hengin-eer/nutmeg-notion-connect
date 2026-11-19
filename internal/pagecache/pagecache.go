@@ -28,6 +28,9 @@ type Meta struct {
 	Fetched    float64 `json:"fetched"` // unix seconds
 	URL        string  `json:"url,omitempty"`
 	PrevEdited string  `json:"prev_edited,omitempty"`
+	// Omitted counts truncated parts that could not be fetched. Such a page is
+	// shown with a warning and fetched again on the next read.
+	Omitted int `json:"omitted,omitempty"`
 }
 
 type Options struct {
@@ -87,7 +90,7 @@ func (s *Store) Load(id string, opt Options) (string, Meta, error) {
 		return "", Meta{}, err
 	}
 	edited := notion.Str(page, "last_edited_time")
-	if hasCache && !opt.Fresh && old.Edited == edited {
+	if hasCache && !opt.Fresh && old.Edited == edited && old.Omitted == 0 {
 		if t, err := time.Parse(time.RFC3339, edited); err == nil {
 			fetched := time.Unix(int64(old.Fetched), 0)
 			if fetched.Sub(t) > editSettle {
@@ -96,16 +99,19 @@ func (s *Store) Load(id string, opt Options) (string, Meta, error) {
 		}
 	}
 
-	raw, err := render.Markdown(c.Get, id)
+	content, err := render.Markdown(c.Get, id)
 	if err != nil {
 		return "", Meta{}, err
 	}
-	body := render.Squash(raw, true)
+	body := render.Squash(content.Markdown, true)
 	meta := Meta{
 		Format: formatVersion, ID: id, Title: notion.Title(page), Edited: edited,
 		Fetched: float64(time.Now().Unix()), URL: notion.Str(page, "url"),
+		Omitted: content.Omitted,
 	}
-	if hasCache && string(cached) != body {
+	// A partial copy is not a real version: comparing with it would make diff
+	// report the missing parts as deletions, so it never becomes the previous one.
+	if hasCache && string(cached) != body && old.Omitted == 0 && meta.Omitted == 0 {
 		if err := fsutil.WriteFileAtomic(prevPath, cached, 0o600); err != nil {
 			return "", Meta{}, err
 		}

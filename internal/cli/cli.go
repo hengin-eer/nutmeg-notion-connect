@@ -16,6 +16,7 @@ import (
 	"github.com/hengin-eer/nutmeg-notion-connect/internal/index"
 	"github.com/hengin-eer/nutmeg-notion-connect/internal/notion"
 	"github.com/hengin-eer/nutmeg-notion-connect/internal/pagecache"
+	"github.com/hengin-eer/nutmeg-notion-connect/internal/render"
 )
 
 const (
@@ -180,7 +181,11 @@ func (a *app) ensureIndex() (*index.Index, error) {
 }
 
 func header(m pagecache.Meta, body string) string {
-	return fmt.Sprintf("%s  [%s / 更新 %s / %d字]", m.Title, m.ID, notion.JST(m.Edited), len([]rune(body)))
+	h := fmt.Sprintf("%s  [%s / 更新 %s / %d字]", m.Title, m.ID, notion.JST(m.Edited), len([]rune(body)))
+	if m.Omitted > 0 {
+		h += fmt.Sprintf("\n⚠ ページが大きく、%dか所を取れませんでした（%s の所）。次に読むときに取り直します", m.Omitted, render.OmittedMark)
+	}
+	return h
 }
 
 func date(iso string) string { return notion.JST(iso)[:min(10, len(notion.JST(iso)))] }

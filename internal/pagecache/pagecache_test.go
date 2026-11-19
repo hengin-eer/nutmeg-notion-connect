@@ -114,3 +114,49 @@ func TestEditSettle(t *testing.T) {
 		t.Fatalf("settle: %q %v calls=%d", body, err, calls)
 	}
 }
+
+// A partial page is shown with its count, refetched on the next read even if
+// the page has not changed, and never kept as the previous version.
+func TestPartialPageIsRefetched(t *testing.T) {
+	dir := t.TempDir()
+	markdownCalls := 0
+	childFails := true
+	original := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = original })
+	http.DefaultTransport = transport(func(r *http.Request) (*http.Response, error) {
+		var o notion.Obj
+		switch r.URL.Path {
+		case "/v1/pages/page":
+			o = notion.Obj{"last_edited_time": "2020-01-01T00:00:00Z"}
+		case "/v1/pages/page/markdown":
+			markdownCalls++
+			o = notion.Obj{"markdown": "head\n<unknown url=\"https://example.test/page#child\" />\n", "truncated": true, "unknown_block_ids": []any{"child"}}
+		case "/v1/pages/child/markdown":
+			if childFails {
+				return &http.Response{StatusCode: 400, Body: io.NopCloser(strings.NewReader(`{"code":"validation_error"}`))}, nil
+			}
+			o = notion.Obj{"markdown": "child body"}
+		default:
+			t.Fatalf("unexpected endpoint %s", r.URL.Path)
+		}
+		b, _ := json.Marshal(o)
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(b)))}, nil
+	})
+	store := Store{Dir: dir, Client: func() *notion.Client { return notion.New("synthetic") }}
+	body, m, err := store.Load("page", Options{})
+	if err != nil || m.Omitted != 1 || !strings.Contains(body, "[省略: 取れなかったブロック]") {
+		t.Fatalf("partial: %q %+v %v", body, m, err)
+	}
+	// Offline reads still get the partial copy, flagged.
+	if _, m, err := store.Load("page", Options{CachedOnly: true}); err != nil || m.Omitted != 1 || markdownCalls != 1 {
+		t.Fatalf("cached partial: %+v %v calls=%d", m, err, markdownCalls)
+	}
+	childFails = false
+	body, m, err = store.Load("page", Options{})
+	if err != nil || m.Omitted != 0 || body != "head\nchild body\n" || markdownCalls != 2 {
+		t.Fatalf("refetch: %q %+v %v calls=%d", body, m, err, markdownCalls)
+	}
+	if _, ok := store.Prev("page"); ok {
+		t.Fatal("a partial copy must not become the previous version")
+	}
+}
